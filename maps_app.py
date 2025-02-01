@@ -31,6 +31,16 @@ if "marker_location" not in st.session_state:
     st.session_state.marker_location = [48.8566, 2.3522]  # Default to Paris
     st.session_state.zoom = 12
 
+# Add radius selector in sidebar (add this after the location section in sidebar)
+st.sidebar.header("Search Options")
+search_radius = st.sidebar.slider(
+    "Search Radius (meters)",
+    min_value=500,
+    max_value=5000,
+    value=2500,
+    step=100
+)
+
 # Create the base map
 m = folium.Map(location=st.session_state.marker_location, zoom_start=st.session_state.zoom)
 
@@ -42,6 +52,16 @@ marker = folium.Marker(
 )
 marker.add_to(m)
 
+# Add a circle to show the search radius
+folium.Circle(
+    location=st.session_state.marker_location,
+    radius=search_radius,
+    color="blue",
+    fill=True,
+    fillColor="blue",
+    fillOpacity=0.1
+).add_to(m)
+
 # Render the map and capture clicks
 map_data = st_folium(m, width=700, height=500)
 
@@ -50,6 +70,7 @@ if map_data.get("last_clicked"):
     lat, lng = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
     st.session_state.marker_location = [lat, lng]
     st.session_state.zoom = map_data["zoom"]
+    st.rerun()
 
 # Display coordinates
 st.write(f"Selected Coordinates: {st.session_state.marker_location}")
@@ -72,7 +93,7 @@ if st.button("Search Restaurants"):
     # Fetch and display restaurants
     location_str = f"{st.session_state.marker_location[0]},{st.session_state.marker_location[1]}"
     with st.spinner('Searching for restaurants... Please wait.'):
-        results = fetch_nearby_restaurants(location_str)
+        results = fetch_nearby_restaurants(location_str, radius=search_radius)
 
         if results:
             st.subheader("Top Restaurants Nearby:")
