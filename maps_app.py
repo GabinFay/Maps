@@ -15,7 +15,7 @@ if not API_KEY:
     st.error("GOOGLE_MAPS_API_KEY environment variable is not set.")
     st.stop()
 
-st.title("Restaurant Finder")
+st.title("Most reviewed places Finder")
 
 # Add geolocation button in sidebar
 st.sidebar.header("Location Options")
@@ -33,6 +33,19 @@ if "marker_location" not in st.session_state:
 
 # Add radius selector in sidebar (add this after the location section in sidebar)
 st.sidebar.header("Search Options")
+
+# Add place type selector
+PLACE_TYPES = [
+    'restaurant', 'bar', 'cafe', 'tourist_attraction', 
+    'museum', 'art_gallery', 'church', 'park',
+    'historical_landmark', 'night_club'
+]
+selected_place_type = st.sidebar.selectbox(
+    "Place Type",
+    options=PLACE_TYPES,
+    index=0  # Default to restaurant
+)
+
 search_radius = st.sidebar.slider(
     "Search Radius (meters)",
     min_value=500,
@@ -88,16 +101,16 @@ def fetch_nearby_restaurants(location, radius=2500, place_type='restaurant'):
         st.error("Error fetching data from Google Places API.")
         return []
 
-# Add search button (renamed from "Confirm Location")
-if st.button("Search Restaurants"):
-    # Fetch and display restaurants
+# Update the search button text to be more generic
+if st.button(f"Search {selected_place_type.replace('_', ' ').title()}s"):
+    # Update the fetch call to use selected place type
     location_str = f"{st.session_state.marker_location[0]},{st.session_state.marker_location[1]}"
-    with st.spinner('Searching for restaurants... Please wait.'):
-        results = fetch_nearby_restaurants(location_str, radius=search_radius)
+    with st.spinner(f'Searching for {selected_place_type.replace("_", " ")}s... Please wait.'):
+        results = fetch_nearby_restaurants(location_str, radius=search_radius, place_type=selected_place_type)
 
         if results:
-            st.subheader("Top Restaurants Nearby:")
-            restaurants = [
+            st.subheader(f"Top {selected_place_type.replace('_', ' ').title()}s Nearby:")
+            places = [
                 {
                     'name': place.get('name'),
                     'user_ratings_total': place.get('user_ratings_total', 0),
@@ -106,18 +119,18 @@ if st.button("Search Restaurants"):
                 }
                 for place in results
             ]
-            sorted_restaurants = sorted(restaurants, key=lambda x: x['user_ratings_total'], reverse=True)
+            sorted_places = sorted(places, key=lambda x: x['user_ratings_total'], reverse=True)
 
-            for restaurant in sorted_restaurants:
-                st.markdown(f"### {restaurant['name']}")
+            for place in sorted_places:
+                st.markdown(f"### {place['name']}")
                 st.write(
-                    f"**Rating:** {restaurant['rating']} stars  |  **Reviews:** {restaurant['user_ratings_total']}"
+                    f"**Rating:** {place['rating']} stars  |  **Reviews:** {place['user_ratings_total']}"
                 )
                 google_maps_link = (
-                    f"https://www.google.com/maps/search/?api=1&query={restaurant['name'].replace(' ', '+')}"
-                    f"&query_place_id={restaurant['place_id']}"
+                    f"https://www.google.com/maps/search/?api=1&query={place['name'].replace(' ', '+')}"
+                    f"&query_place_id={place['place_id']}"
                 )
                 st.markdown(f"[View on Google Maps]({google_maps_link})")
                 st.write("---")
         else:
-            st.warning("No restaurants found nearby.")
+            st.warning(f"No {selected_place_type.replace('_', ' ')}s found nearby.")
