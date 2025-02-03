@@ -1,6 +1,6 @@
-streamlit==1.32.0
-folium==0.15.1
-streamlit-folium==0.15.1
-requests==2.31.0
-python-dotenv==1.0.1
-streamlit-geolocation==0.1.0
+streamlit
+folium
+streamlit-folium
+requests
+python-dotenv
+streamlit-geolocation

@@ -17,8 +17,43 @@ if not API_KEY:
 
 st.title("Most reviewed places Finder")
 
-# Add geolocation button in sidebar
-st.sidebar.header("Location Options")
+# Remove sidebar references and place controls in main page
+st.subheader("Search Settings")
+
+# Add place type selector
+PLACE_TYPES = [
+    'restaurant', 'bar', 'cafe', 'tourist_attraction', 
+    'museum', 'art_gallery', 'church', 'park',
+    'historical_landmark', 'night_club', 'tourism'
+]
+selected_place_type = st.selectbox(
+    "Place Type",
+    options=PLACE_TYPES,
+    index=0  # Default to restaurant
+)
+
+# Replace the existing slider with a number input that has a slider
+col1, col2 = st.columns([3, 1])
+with col1:
+    search_radius = st.slider(
+        "Search Radius (meters)",
+        min_value=100,
+        max_value=2000,
+        value=500,
+        step=100
+    )
+with col2:
+    manual_radius = st.number_input(
+        "Custom Radius",
+        min_value=100,
+        value=search_radius,
+        help="Enter a custom radius in meters"
+    )
+
+# Use the manual input if it's different from the slider value
+search_radius = manual_radius if manual_radius != search_radius else search_radius
+
+# Add geolocation button
 location = streamlit_geolocation()
 
 # Update marker location when geolocation is received
@@ -31,30 +66,7 @@ if "marker_location" not in st.session_state:
     st.session_state.marker_location = [48.8566, 2.3522]  # Default to Paris
     st.session_state.zoom = 12
 
-# Add radius selector in sidebar (add this after the location section in sidebar)
-st.sidebar.header("Search Options")
-
-# Add place type selector
-PLACE_TYPES = [
-    'restaurant', 'bar', 'cafe', 'tourist_attraction', 
-    'museum', 'art_gallery', 'church', 'park',
-    'historical_landmark', 'night_club'
-]
-selected_place_type = st.sidebar.selectbox(
-    "Place Type",
-    options=PLACE_TYPES,
-    index=0  # Default to restaurant
-)
-
-search_radius = st.sidebar.slider(
-    "Search Radius (meters)",
-    min_value=500,
-    max_value=5000,
-    value=2500,
-    step=100
-)
-
-# Create the base map
+# Create the base map with smaller dimensions
 m = folium.Map(location=st.session_state.marker_location, zoom_start=st.session_state.zoom)
 
 # Add a marker at the current location in session state
@@ -75,8 +87,8 @@ folium.Circle(
     fillOpacity=0.1
 ).add_to(m)
 
-# Render the map and capture clicks
-map_data = st_folium(m, width=700, height=500)
+# Render the map with smaller dimensions
+map_data = st_folium(m, width=600, height=400)
 
 # Update marker position immediately after each click
 if map_data.get("last_clicked"):
