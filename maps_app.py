@@ -69,6 +69,9 @@ if "marker_location" not in st.session_state:
 # Create the base map with smaller dimensions
 m = folium.Map(location=st.session_state.marker_location, zoom_start=st.session_state.zoom)
 
+# Display coordinates before the map
+st.write(f"Selected Coordinates: {st.session_state.marker_location}")
+
 # Add a marker at the current location in session state
 marker = folium.Marker(
     location=st.session_state.marker_location,
@@ -96,9 +99,6 @@ if map_data.get("last_clicked"):
     st.session_state.marker_location = [lat, lng]
     st.session_state.zoom = map_data["zoom"]
     st.rerun()
-
-# Display coordinates
-st.write(f"Selected Coordinates: {st.session_state.marker_location}")
 
 # Function to fetch nearby restaurants
 def fetch_nearby_restaurants(location, radius=2500, place_type='restaurant'):
