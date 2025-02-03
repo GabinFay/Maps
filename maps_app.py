@@ -17,6 +17,33 @@ if not API_KEY:
 
 st.title("Most reviewed places Finder")
 
+# Add a text input for the search box
+place_query = st.text_input("Search for a place:", "")
+
+# Function to fetch place details using Google Places API
+def fetch_place_details(query):
+    search_url = (
+        f"https://maps.googleapis.com/maps/api/place/findplacefromtext/json"
+        f"?input={query}&inputtype=textquery&fields=geometry,name&key={API_KEY}"
+    )
+    response = requests.get(search_url)
+    if response.status_code == 200:
+        candidates = response.json().get('candidates', [])
+        if candidates:
+            return candidates[0]  # Return the first matching place
+    return None
+
+# Handle the search query
+if place_query:
+    place_details = fetch_place_details(place_query)
+    if place_details:
+        location = place_details['geometry']['location']
+        st.session_state.marker_location = [location['lat'], location['lng']]
+        st.session_state.zoom = 15  # Zoom in closer to the selected place
+        st.success(f"Found: {place_details['name']}")
+    else:
+        st.error("Place not found. Please try a different query.")
+
 # Remove sidebar references and place controls in main page
 st.subheader("Search Settings")
 
