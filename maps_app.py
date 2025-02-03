@@ -88,7 +88,7 @@ folium.Circle(
 ).add_to(m)
 
 # Render the map with smaller dimensions
-map_data = st_folium(m, width=600, height=400)
+map_data = st_folium(m, width=300, height=300)
 
 # Update marker position immediately after each click
 if map_data.get("last_clicked"):
