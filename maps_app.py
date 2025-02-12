@@ -59,20 +59,33 @@ if place_query and place_query != st.session_state.previous_query:
 
 # Search settings
 st.subheader("Search Settings")
+
 PLACE_TYPES = [
-    'restaurant', 'bar', 'cafe', 'tourist_attraction', 
-    'museum', 'art_gallery', 'church', 'park',
-    'historical_landmark', 'night_club', 'tourism'
+    'restaurant', 'bar', 'cafe', 'tourist_attraction', 'historical_landmark',
+    'museum', 'night_club', 'bakery', 'library', 'art_gallery', 'lodging',
+    'church', 'park', 'supermarket', 'atm', 'tourism', 'pharmacy',
+    'clothing_store', 'electronics_store', 'parking', 'movie_theater',
+    'post_office', 'shoe_store', 'shopping_mall', 'stadium', 'store'
 ]
 selected_place_type = st.selectbox("Place Type", options=PLACE_TYPES, index=0)
 
-col1, col2 = st.columns([3, 1])
-with col1:
-    search_radius = st.slider("Search Radius (meters)", min_value=100, max_value=2000, value=500, step=100)
-with col2:
-    manual_radius = st.number_input("Custom Radius", min_value=100, value=search_radius, help="Enter a custom radius in meters")
+# Replace the columns and slider with just the number input
+search_radius = st.number_input("Search Radius (meters)", min_value=100, value=500, help="Enter a radius in meters")
 
-search_radius = manual_radius if manual_radius != search_radius else search_radius
+# Calculate appropriate zoom level based on radius
+# These values are approximate and can be adjusted
+if search_radius <= 200:
+    st.session_state.zoom = 15
+elif search_radius <= 500:
+    st.session_state.zoom = 14
+elif search_radius <= 1000:
+    st.session_state.zoom = 13
+elif search_radius <= 7500:
+    st.session_state.zoom = 12
+elif search_radius <= 50000:
+    st.session_state.zoom = 11
+else:
+    st.session_state.zoom = 10
 
 # Add geolocation button
 col1, col2 = st.columns([1, 3])
@@ -107,37 +120,172 @@ folium.Circle(
     fillOpacity=0.1
 ).add_to(m)
 
+# Function to add place markers to the map
+def add_place_markers(places, map_obj, limit=10):
+    for place in places[:limit]:
+        if 'geometry' in place and 'location' in place['geometry']:
+            location = place['geometry']['location']
+            color = PLACE_TYPE_COLORS.get(place.get('category', 'other'), PLACE_TYPE_COLORS['other'])
+            folium.Marker(
+                location=[location['lat'], location['lng']],
+                popup=place['name'],
+                tooltip=place['name'],
+                icon=folium.Icon(color='lightgray', icon='info-sign'),
+            ).add_to(map_obj)
+
 # Render the map
 map_data = st_folium(m, width=300, height=300)
 
-# Simplified map click handling without debounce
-if map_data.get("last_clicked"):
+# Initialize session state for map clicks
+if "map_clicked" not in st.session_state:
+    st.session_state.map_clicked = False
+
+# Map click handling
+if map_data.get("last_clicked") and not st.session_state.map_clicked:
     print("last clicked", map_data["last_clicked"])
     lat, lng = map_data["last_clicked"]["lat"], map_data["last_clicked"]["lng"]
-    st.session_state.marker_location = [lat, lng]
-    st.session_state.zoom = map_data["zoom"]
-    print('rerunning')
-    st.rerun()
+    if [lat, lng] != st.session_state.marker_location:  # Only rerun if location actually changed
+        st.session_state.marker_location = [lat, lng]
+        st.session_state.zoom = map_data["zoom"]
+        st.session_state.map_clicked = True
+        print('rerunning')
+        st.rerun()
+
+# Reset map_clicked state after the rerun
+if st.session_state.map_clicked:
+    st.session_state.map_clicked = False
 
 # Function to fetch nearby places
 def fetch_nearby_places(location, radius=2500, place_type='restaurant'):
+    all_results = []
     search_url = (
         f"https://maps.googleapis.com/maps/api/place/nearbysearch/json"
         f"?location={location}&radius={radius}&type={place_type}&key={API_KEY}"
     )
+    
+    # Fetch first page
     response = requests.get(search_url)
-    if response.status_code == 200:
-        return response.json().get('results', [])
-    else:
+    if response.status_code != 200:
         st.error("Error fetching data from Google Places API.")
         return []
+    
+    first_page = response.json()
+    all_results.extend(first_page.get('results', []))
+    
+    # Fetch up to 2 more pages using pagetoken
+    for _ in range(2):  # Try to get 2 more pages
+        next_page_token = first_page.get('next_page_token')
+        if not next_page_token:
+            break
+            
+        # Wait for token to become valid (Google requires a delay)
+        time.sleep(2)
+        
+        next_page_url = f"{search_url}&pagetoken={next_page_token}"
+        response = requests.get(next_page_url)
+        if response.status_code == 200:
+            first_page = response.json()
+            all_results.extend(first_page.get('results', []))
+    
+    return all_results
+
+# Add this after the existing place types list
+MAIN_PLACE_TYPES = [
+    'restaurant', 'bar', 'cafe', 'tourist_attraction', 'museum'
+]
+
+PLACE_TYPE_COLORS = {
+    'restaurant': '#FF0000',     # Red
+    'bar': '#FFA500',           # Orange
+    'cafe': '#8B4513',          # Brown
+    'tourist_attraction': '#4169E1',  # Royal Blue
+    'museum': '#800080',        # Purple
+    'shopping_mall': '#FFD700',  # Gold
+    'park': '#228B22',          # Forest Green
+    'night_club': '#FF1493',    # Deep Pink
+    'art_gallery': '#4B0082',   # Indigo
+    'other': '#808080'          # Gray for uncategorized places
+}
+
+# Modify the Typeless Search button section
+if st.button("Typeless Search"):
+    location_str = f"{st.session_state.marker_location[0]},{st.session_state.marker_location[1]}"
+    all_results = []
+    
+    with st.spinner('Searching across main categories... This may take a few seconds...'):
+        # Fetch results for main place types only
+        for place_type in MAIN_PLACE_TYPES:
+            results = fetch_nearby_places(location_str, radius=search_radius, place_type=place_type)
+            for result in results:
+                result['category'] = place_type  # Add category information
+            all_results.extend(results)
+        
+        if all_results:
+            # Sort results by review count
+            sorted_results = sorted(all_results, key=lambda x: x.get('user_ratings_total', 0), reverse=True)
+            # Add markers for top 10 places
+            add_place_markers(sorted_results, m)
+            
+            st.subheader("Top Places Nearby (All Categories):")
+            st.write(f"Found {len(all_results)} places")
+            
+            # Display category legend
+            st.subheader("Category Legend:")
+            legend_cols = st.columns(3)
+            for idx, (category, color) in enumerate(PLACE_TYPE_COLORS.items()):
+                col_idx = idx % 3
+                legend_cols[col_idx].markdown(
+                    f'<span style="color:{color}">⬤</span> {category.replace("_", " ").title()}',
+                    unsafe_allow_html=True
+                )
+            
+            # Process and sort results
+            places = [
+                {
+                    'name': place.get('name'),
+                    'user_ratings_total': place.get('user_ratings_total', 0),
+                    'rating': place.get('rating', 'N/A'),
+                    'place_id': place.get('place_id'),
+                    'category': place.get('category', 'other')
+                }
+                for place in all_results
+            ]
+            
+            # Remove duplicates based on place_id
+            unique_places = {place['place_id']: place for place in places}.values()
+            sorted_places = sorted(unique_places, key=lambda x: x['user_ratings_total'], reverse=True)
+            
+            for place in sorted_places:
+                category = place['category']
+                color = PLACE_TYPE_COLORS.get(category, PLACE_TYPE_COLORS['other'])
+                st.markdown(
+                    f"### <span style='color:{color}'>⬤</span> {place['name']}", 
+                    unsafe_allow_html=True
+                )
+                st.write(f"**Category:** {category.replace('_', ' ').title()}")
+                st.write(f"**Rating:** {place['rating']} stars  |  **Reviews:** {place['user_ratings_total']}")
+                google_maps_link = (
+                    f"https://www.google.com/maps/search/?api=1&query={place['name'].replace(' ', '+')}"
+                    f"&query_place_id={place['place_id']}"
+                )
+                st.markdown(f"[View on Google Maps]({google_maps_link})")
+                st.write("---")
+        else:
+            st.warning("No places found nearby.")
 
 if st.button(f"Search {selected_place_type.replace('_', ' ').title()}s"):
     location_str = f"{st.session_state.marker_location[0]},{st.session_state.marker_location[1]}"
-    with st.spinner(f'Searching for {selected_place_type.replace("_", " ")}s... Please wait.'):
+    with st.spinner(f'Searching for {selected_place_type.replace("_", " ")}s... This may take a few seconds...'):
         results = fetch_nearby_places(location_str, radius=search_radius, place_type=selected_place_type)
         if results:
+            # Sort results by review count
+            sorted_results = sorted(results, key=lambda x: x.get('user_ratings_total', 0), reverse=True)
+            # Add markers for top 10 places
+            add_place_markers(sorted_results, m)
+            
             st.subheader(f"Top {selected_place_type.replace('_', ' ').title()}s Nearby:")
+            st.write(f"Found {len(results)} places")
+            
             places = [
                 {
                     'name': place.get('name'),
