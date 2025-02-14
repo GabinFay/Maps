@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import os
 import time
 from streamlit_geolocation import streamlit_geolocation
+import math
 
 # Load environment variables from .env file
 load_dotenv()
@@ -72,6 +73,12 @@ selected_place_type = st.selectbox("Place Type", options=PLACE_TYPES, index=0)
 # Replace the columns and slider with just the number input
 search_radius = st.number_input("Search Radius (meters)", min_value=100, value=500, help="Enter a radius in meters")
 
+# Add grid search option after the search radius input
+grid_search_enabled = st.checkbox("Enable Grid Search", value=False, help="Enable this to search in a grid pattern for better coverage")
+
+# Add this after the grid search checkbox
+fetch_all_pages = st.checkbox("Fetch all available results", value=True, help="When enabled, fetches up to 60 results (3 pages). When disabled, fetches only 20 results (1 page).")
+
 # Calculate appropriate zoom level based on radius
 # These values are approximate and can be adjusted
 if search_radius <= 200:
@@ -79,13 +86,13 @@ if search_radius <= 200:
 elif search_radius <= 500:
     st.session_state.zoom = 14
 elif search_radius <= 1000:
-    st.session_state.zoom = 13
-elif search_radius <= 7500:
     st.session_state.zoom = 12
-elif search_radius <= 50000:
+elif search_radius <= 7500:
     st.session_state.zoom = 11
-else:
+elif search_radius <= 50000:
     st.session_state.zoom = 10
+else:
+    st.session_state.zoom = 9
 
 # Add geolocation button
 col1, col2 = st.columns([1, 3])
@@ -98,25 +105,58 @@ if location and location['latitude'] is not None and location['longitude'] is no
     st.session_state.marker_location = [location['latitude'], location['longitude']]
     st.session_state.zoom = 15
 
-# Create the base map - move this closer to where we use it
+# Add this function before the fetch_nearby_places function
+def calculate_grid_points(center, radius):
+    lat, lng = center
+    # Calculate offsets for a 3x3 grid
+    # Adjust spacing to 0.4 (up from 0.33) for slightly larger coverage
+    lat_offset = (radius * 0.00001) * 0.5  # Increased spacing
+    lng_offset = (radius * 0.00001 / math.cos(math.radians(lat))) * 0.5  # Adjusted for longitude distortion
+    
+    grid_points = []
+    for i in range(-1, 2):  # -1, 0, 1
+        for j in range(-1, 2):  # -1, 0, 1
+            grid_points.append([
+                lat + (i * lat_offset),
+                lng + (j * lng_offset)
+            ])
+    return grid_points
+
+# Update the create_base_map function
 def create_base_map():
     m = folium.Map(location=st.session_state.marker_location, zoom_start=st.session_state.zoom)
     
-    # Add center marker and circle
+    # Add center marker
     folium.Marker(
         location=st.session_state.marker_location,
         draggable=False,
         icon=folium.Icon(color="red", icon="info-sign"),
     ).add_to(m)
     
-    folium.Circle(
-        location=st.session_state.marker_location,
-        radius=search_radius,
-        color="blue",
-        fill=True,
-        fillColor="blue",
-        fillOpacity=0.1
-    ).add_to(m)
+    if grid_search_enabled:
+        # Display 3x3 grid
+        grid_points = calculate_grid_points(st.session_state.marker_location, search_radius)
+        
+        # Create grid cells with slightly larger radius
+        for point in grid_points:
+            folium.Circle(
+                location=point,
+                radius=search_radius * 0.5,  # Increased from 0.33 to 0.4
+                color="blue",
+                fill=True,
+                fillColor="blue",
+                fillOpacity=0.1
+            ).add_to(m)
+    else:
+        # Display single circle
+        folium.Circle(
+            location=st.session_state.marker_location,
+            radius=search_radius,
+            color="blue",
+            fill=True,
+            fillColor="blue",
+            fillOpacity=0.1
+        ).add_to(m)
     
     return m
 
@@ -187,20 +227,22 @@ def fetch_nearby_places(location, radius=2500, place_type='restaurant'):
     first_page = response.json()
     all_results.extend(first_page.get('results', []))
     
-    # Fetch up to 2 more pages using pagetoken
-    for _ in range(2):  # Try to get 2 more pages
-        next_page_token = first_page.get('next_page_token')
-        if not next_page_token:
-            break
+    # Only fetch additional pages if the option is enabled
+    if fetch_all_pages:
+        # Fetch up to 2 more pages using pagetoken
+        for _ in range(2):  # Try to get 2 more pages
+            next_page_token = first_page.get('next_page_token')
+            if not next_page_token:
+                break
+                
+            # Wait for token to become valid (Google requires a delay)
+            time.sleep(2)
             
-        # Wait for token to become valid (Google requires a delay)
-        time.sleep(2)
-        
-        next_page_url = f"{search_url}&pagetoken={next_page_token}"
-        response = requests.get(next_page_url)
-        if response.status_code == 200:
-            first_page = response.json()
-            all_results.extend(first_page.get('results', []))
+            next_page_url = f"{search_url}&pagetoken={next_page_token}"
+            response = requests.get(next_page_url)
+            if response.status_code == 200:
+                first_page = response.json()
+                all_results.extend(first_page.get('results', []))
     
     return all_results
 
@@ -222,18 +264,39 @@ PLACE_TYPE_COLORS = {
     'other': '#808080'          # Gray for uncategorized places
 }
 
-# Modify the Typeless Search button section
+# Update the Typeless Search button section to include grid search
 if st.button("Typeless Search"):
     location_str = f"{st.session_state.marker_location[0]},{st.session_state.marker_location[1]}"
     all_results = []
+    seen_place_ids = set()  # Track unique places
     
     with st.spinner('Searching across main categories... This may take a few seconds...'):
-        # Fetch results for main place types only
-        for place_type in MAIN_PLACE_TYPES:
-            results = fetch_nearby_places(location_str, radius=search_radius, place_type=place_type)
-            for result in results:
-                result['category'] = place_type
-            all_results.extend(results)
+        if grid_search_enabled:
+            grid_points = calculate_grid_points(st.session_state.marker_location, search_radius)
+            progress_text = "Making API requests..."
+            progress_bar = st.progress(0, text=progress_text)
+            
+            for idx, point in enumerate(grid_points):
+                loc_str = f"{point[0]},{point[1]}"
+                for place_type in MAIN_PLACE_TYPES:
+                    results = fetch_nearby_places(loc_str, radius=search_radius, place_type=place_type)
+                    for result in results:
+                        if result.get('place_id') not in seen_place_ids:
+                            seen_place_ids.add(result.get('place_id'))
+                            result['category'] = place_type
+                            all_results.append(result)
+                
+                # Update progress
+                progress = (idx + 1) / len(grid_points)
+                progress_bar.progress(progress, text=f"{progress_text} ({idx + 1}/9)")
+            
+            progress_bar.empty()  # Remove the progress bar when done
+        else:
+            for place_type in MAIN_PLACE_TYPES:
+                results = fetch_nearby_places(location_str, radius=search_radius, place_type=place_type)
+                for result in results:
+                    result['category'] = place_type
+                all_results.extend(results)
         
         if all_results:
             # Sort results by review count
@@ -290,20 +353,46 @@ if st.button("Typeless Search"):
         else:
             st.warning("No places found nearby.")
 
+# Update the single place type search button to include grid search
 if st.button(f"Search {selected_place_type.replace('_', ' ').title()}s"):
     location_str = f"{st.session_state.marker_location[0]},{st.session_state.marker_location[1]}"
+    all_results = []
+    seen_place_ids = set()
+    
     with st.spinner(f'Searching for {selected_place_type.replace("_", " ")}s... This may take a few seconds...'):
-        results = fetch_nearby_places(location_str, radius=search_radius, place_type=selected_place_type)
-        if results:
+        if grid_search_enabled:
+            grid_points = calculate_grid_points(st.session_state.marker_location, search_radius)
+            progress_text = "Making API requests..."
+            progress_bar = st.progress(0, text=progress_text)
+            
+            for idx, point in enumerate(grid_points):
+                loc_str = f"{point[0]},{point[1]}"
+                results = fetch_nearby_places(loc_str, radius=search_radius, place_type=selected_place_type)
+                
+                # Only add unique places
+                for result in results:
+                    if result.get('place_id') not in seen_place_ids:
+                        seen_place_ids.add(result.get('place_id'))
+                        all_results.append(result)
+                
+                # Update progress
+                progress = (idx + 1) / len(grid_points)
+                progress_bar.progress(progress, text=f"{progress_text} ({idx + 1}/9)")
+            
+            progress_bar.empty()  # Remove the progress bar when done
+        else:
+            all_results = fetch_nearby_places(location_str, radius=search_radius, place_type=selected_place_type)
+
+        if all_results:
             # Sort results by review count
-            sorted_results = sorted(results, key=lambda x: x.get('user_ratings_total', 0), reverse=True)
+            sorted_results = sorted(all_results, key=lambda x: x.get('user_ratings_total', 0), reverse=True)
             
             # Create new map with markers
             m = create_base_map()
             add_place_markers(sorted_results, m)
             
             st.subheader(f"Top {selected_place_type.replace('_', ' ').title()}s Nearby:")
-            st.write(f"Found {len(results)} places")
+            st.write(f"Found {len(all_results)} places")
             
             places = [
                 {
@@ -312,7 +401,7 @@ if st.button(f"Search {selected_place_type.replace('_', ' ').title()}s"):
                     'rating': place.get('rating', 'N/A'),
                     'place_id': place.get('place_id')
                 }
-                for place in results
+                for place in all_results
             ]
             sorted_places = sorted(places, key=lambda x: x['user_ratings_total'], reverse=True)
             for place in sorted_places:
