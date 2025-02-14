@@ -98,40 +98,55 @@ if location and location['latitude'] is not None and location['longitude'] is no
     st.session_state.marker_location = [location['latitude'], location['longitude']]
     st.session_state.zoom = 15
 
-# Create the base map
-m = folium.Map(location=st.session_state.marker_location, zoom_start=st.session_state.zoom)
-
-# Display coordinates
-st.write(f"Selected Coordinates: {st.session_state.marker_location}")
-
-# Add a marker and circle
-folium.Marker(
-    location=st.session_state.marker_location,
-    draggable=False,
-    icon=folium.Icon(color="red", icon="info-sign"),
-).add_to(m)
-
-folium.Circle(
-    location=st.session_state.marker_location,
-    radius=search_radius,
-    color="blue",
-    fill=True,
-    fillColor="blue",
-    fillOpacity=0.1
-).add_to(m)
+# Create the base map - move this closer to where we use it
+def create_base_map():
+    m = folium.Map(location=st.session_state.marker_location, zoom_start=st.session_state.zoom)
+    
+    # Add center marker and circle
+    folium.Marker(
+        location=st.session_state.marker_location,
+        draggable=False,
+        icon=folium.Icon(color="red", icon="info-sign"),
+    ).add_to(m)
+    
+    folium.Circle(
+        location=st.session_state.marker_location,
+        radius=search_radius,
+        color="blue",
+        fill=True,
+        fillColor="blue",
+        fillOpacity=0.1
+    ).add_to(m)
+    
+    return m
 
 # Function to add place markers to the map
 def add_place_markers(places, map_obj, limit=10):
-    for place in places[:limit]:
+    for i, place in enumerate(places[:limit]):
         if 'geometry' in place and 'location' in place['geometry']:
             location = place['geometry']['location']
-            color = PLACE_TYPE_COLORS.get(place.get('category', 'other'), PLACE_TYPE_COLORS['other'])
+            category = place.get('category', 'other')
+            color = PLACE_TYPE_COLORS.get(category, PLACE_TYPE_COLORS['other'])
+            
+            # Create popup content with place details
+            popup_content = f"""
+            <b>{place['name']}</b><br>
+            Rating: {place.get('rating', 'N/A')}<br>
+            Reviews: {place.get('user_ratings_total', 0)}
+            """
+            
             folium.Marker(
                 location=[location['lat'], location['lng']],
-                popup=place['name'],
-                tooltip=place['name'],
-                icon=folium.Icon(color='lightgray', icon='info-sign'),
+                popup=folium.Popup(popup_content, max_width=300),
+                tooltip=f"{i+1}. {place['name']}",
+                icon=folium.Icon(color='green', icon='info-sign'),
             ).add_to(map_obj)
+
+# Initialize the map
+m = create_base_map()
+
+# Display coordinates
+st.write(f"Selected Coordinates: {st.session_state.marker_location}")
 
 # Render the map
 map_data = st_folium(m, width=300, height=300)
@@ -217,13 +232,15 @@ if st.button("Typeless Search"):
         for place_type in MAIN_PLACE_TYPES:
             results = fetch_nearby_places(location_str, radius=search_radius, place_type=place_type)
             for result in results:
-                result['category'] = place_type  # Add category information
+                result['category'] = place_type
             all_results.extend(results)
         
         if all_results:
             # Sort results by review count
             sorted_results = sorted(all_results, key=lambda x: x.get('user_ratings_total', 0), reverse=True)
-            # Add markers for top 10 places
+            
+            # Create new map with markers
+            m = create_base_map()
             add_place_markers(sorted_results, m)
             
             st.subheader("Top Places Nearby (All Categories):")
@@ -280,7 +297,9 @@ if st.button(f"Search {selected_place_type.replace('_', ' ').title()}s"):
         if results:
             # Sort results by review count
             sorted_results = sorted(results, key=lambda x: x.get('user_ratings_total', 0), reverse=True)
-            # Add markers for top 10 places
+            
+            # Create new map with markers
+            m = create_base_map()
             add_place_markers(sorted_results, m)
             
             st.subheader(f"Top {selected_place_type.replace('_', ' ').title()}s Nearby:")
