@@ -168,13 +168,47 @@ def create_base_map():
 
 # Function to add place markers to the map
 def add_place_markers(places, map_obj, limit=None):
-    for place in places:
+    # Sort places by review count to identify top 3
+    sorted_places = sorted(places, key=lambda x: x.get('user_ratings_total', 0), reverse=True)
+    
+    for i, place in enumerate(sorted_places):
         if 'geometry' in place and 'location' in place['geometry']:
             location = place['geometry']['location']
-            # Simple marker with no popup or extra info
+            
+            # Create the popup HTML with the place name, reviews, and Google Maps link
+            google_maps_link = (
+                f"https://www.google.com/maps/search/?api=1&"
+                f"query={place['name'].replace(' ', '+')}&"
+                f"query_place_id={place['place_id']}"
+            )
+            
+            popup_html = f"""
+                <div style='font-family: Arial, sans-serif;'>
+                    <h4><a href='{google_maps_link}' target='_blank'>{place.get('name', 'N/A')}</a></h4>
+                    <p>Reviews: {place.get('user_ratings_total', 0)}</p>
+                </div>
+            """
+            
+            # Create a Popup object with the HTML content
+            popup = folium.Popup(folium.Html(popup_html, script=True), max_width=300)
+            
+            # Set color based on ranking
+            if i == 0:
+                color = 'yellow'  # First place
+            elif i == 1:
+                color = 'green'   # Second place
+            elif i == 2:
+                color = 'orange'  # Third place
+            else:
+                color = 'blue'    # All other places
+            
+            # Create a marker with both the popup and a tooltip (visible on hover)
+            tooltip = f"{place.get('name', 'N/A')} - {place.get('user_ratings_total', 0)} reviews"
             folium.Marker(
                 location=[location['lat'], location['lng']],
-                icon=folium.Icon(color='red')
+                popup=popup,
+                tooltip=tooltip,
+                icon=folium.Icon(color=color)
             ).add_to(map_obj)
 
 # Initialize the map
