@@ -44,6 +44,12 @@ if "marker_location" not in st.session_state:
     st.session_state.marker_location = [48.8566, 2.3522]  # Default to Paris
     st.session_state.zoom = 12
 
+# Add to session state initialization at the top
+if "search_results_map" not in st.session_state:
+    st.session_state.search_results_map = None
+if "search_results" not in st.session_state:
+    st.session_state.search_results = []
+
 # Handle the search query only when it changes
 if place_query and place_query != st.session_state.previous_query:
     print("place query", place_query)
@@ -77,7 +83,7 @@ search_radius = st.number_input("Search Radius (meters)", min_value=100, value=5
 grid_search_enabled = st.checkbox("Enable Grid Search", value=False, help="Enable this to search in a grid pattern for better coverage")
 
 # Add this after the grid search checkbox
-fetch_all_pages = st.checkbox("Fetch all available results", value=True, help="When enabled, fetches up to 60 results (3 pages). When disabled, fetches only 20 results (1 page).")
+fetch_all_pages = st.checkbox("Fetch all available results", value=False, help="When enabled, fetches up to 60 results (3 pages). When disabled, fetches only 20 results (1 page).")
 
 # Calculate appropriate zoom level based on radius
 # These values are approximate and can be adjusted
@@ -161,25 +167,14 @@ def create_base_map():
     return m
 
 # Function to add place markers to the map
-def add_place_markers(places, map_obj, limit=10):
-    for i, place in enumerate(places[:limit]):
+def add_place_markers(places, map_obj, limit=None):
+    for place in places:
         if 'geometry' in place and 'location' in place['geometry']:
             location = place['geometry']['location']
-            category = place.get('category', 'other')
-            color = PLACE_TYPE_COLORS.get(category, PLACE_TYPE_COLORS['other'])
-            
-            # Create popup content with place details
-            popup_content = f"""
-            <b>{place['name']}</b><br>
-            Rating: {place.get('rating', 'N/A')}<br>
-            Reviews: {place.get('user_ratings_total', 0)}
-            """
-            
+            # Simple marker with no popup or extra info
             folium.Marker(
                 location=[location['lat'], location['lng']],
-                popup=folium.Popup(popup_content, max_width=300),
-                tooltip=f"{i+1}. {place['name']}",
-                icon=folium.Icon(color='green', icon='info-sign'),
+                icon=folium.Icon(color='red')
             ).add_to(map_obj)
 
 # Initialize the map
@@ -210,7 +205,6 @@ if map_data.get("last_clicked") and not st.session_state.map_clicked:
 if st.session_state.map_clicked:
     st.session_state.map_clicked = False
 
-# Function to fetch nearby places
 def fetch_nearby_places(location, radius=2500, place_type='restaurant'):
     all_results = []
     search_url = (
@@ -244,7 +238,16 @@ def fetch_nearby_places(location, radius=2500, place_type='restaurant'):
                 first_page = response.json()
                 all_results.extend(first_page.get('results', []))
     
+    # Debugging: Print the latitude and longitude of each fetched place
+    for place in all_results:
+        if 'geometry' in place and 'location' in place['geometry']:
+            location = place['geometry']['location']
+            print(f"Fetched place: {place.get('name', 'N/A')} at "
+                  f"Latitude: {location.get('lat', 'N/A')}, "
+                  f"Longitude: {location.get('lng', 'N/A')}")
+    
     return all_results
+
 
 # Add this after the existing place types list
 MAIN_PLACE_TYPES = [
@@ -264,19 +267,16 @@ PLACE_TYPE_COLORS = {
     'other': '#808080'          # Gray for uncategorized places
 }
 
-# Update the Typeless Search button section to include grid search
+# Update the Typeless Search button section
 if st.button("Typeless Search"):
     location_str = f"{st.session_state.marker_location[0]},{st.session_state.marker_location[1]}"
     all_results = []
-    seen_place_ids = set()  # Track unique places
+    seen_place_ids = set()
     
     with st.spinner('Searching across main categories... This may take a few seconds...'):
         if grid_search_enabled:
             grid_points = calculate_grid_points(st.session_state.marker_location, search_radius)
-            progress_text = "Making API requests..."
-            progress_bar = st.progress(0, text=progress_text)
-            
-            for idx, point in enumerate(grid_points):
+            for point in grid_points:
                 loc_str = f"{point[0]},{point[1]}"
                 for place_type in MAIN_PLACE_TYPES:
                     results = fetch_nearby_places(loc_str, radius=search_radius, place_type=place_type)
@@ -285,133 +285,58 @@ if st.button("Typeless Search"):
                             seen_place_ids.add(result.get('place_id'))
                             result['category'] = place_type
                             all_results.append(result)
-                
-                # Update progress
-                progress = (idx + 1) / len(grid_points)
-                progress_bar.progress(progress, text=f"{progress_text} ({idx + 1}/9)")
-            
-            progress_bar.empty()  # Remove the progress bar when done
         else:
             for place_type in MAIN_PLACE_TYPES:
                 results = fetch_nearby_places(location_str, radius=search_radius, place_type=place_type)
                 for result in results:
-                    result['category'] = place_type
-                all_results.extend(results)
-        
-        if all_results:
-            # Sort results by review count
-            sorted_results = sorted(all_results, key=lambda x: x.get('user_ratings_total', 0), reverse=True)
-            
-            # Create new map with markers
-            m = create_base_map()
-            add_place_markers(sorted_results, m)
-            
-            st.subheader("Top Places Nearby (All Categories):")
-            st.write(f"Found {len(all_results)} places")
-            
-            # Display category legend
-            st.subheader("Category Legend:")
-            legend_cols = st.columns(3)
-            for idx, (category, color) in enumerate(PLACE_TYPE_COLORS.items()):
-                col_idx = idx % 3
-                legend_cols[col_idx].markdown(
-                    f'<span style="color:{color}">⬤</span> {category.replace("_", " ").title()}',
-                    unsafe_allow_html=True
-                )
-            
-            # Process and sort results
-            places = [
-                {
-                    'name': place.get('name'),
-                    'user_ratings_total': place.get('user_ratings_total', 0),
-                    'rating': place.get('rating', 'N/A'),
-                    'place_id': place.get('place_id'),
-                    'category': place.get('category', 'other')
-                }
-                for place in all_results
-            ]
-            
-            # Remove duplicates based on place_id
-            unique_places = {place['place_id']: place for place in places}.values()
-            sorted_places = sorted(unique_places, key=lambda x: x['user_ratings_total'], reverse=True)
-            
-            for place in sorted_places:
-                category = place['category']
-                color = PLACE_TYPE_COLORS.get(category, PLACE_TYPE_COLORS['other'])
-                st.markdown(
-                    f"### <span style='color:{color}'>⬤</span> {place['name']}", 
-                    unsafe_allow_html=True
-                )
-                st.write(f"**Category:** {category.replace('_', ' ').title()}")
-                st.write(f"**Rating:** {place['rating']} stars  |  **Reviews:** {place['user_ratings_total']}")
-                google_maps_link = (
-                    f"https://www.google.com/maps/search/?api=1&query={place['name'].replace(' ', '+')}"
-                    f"&query_place_id={place['place_id']}"
-                )
-                st.markdown(f"[View on Google Maps]({google_maps_link})")
-                st.write("---")
-        else:
-            st.warning("No places found nearby.")
-
-# Update the single place type search button to include grid search
-if st.button(f"Search {selected_place_type.replace('_', ' ').title()}s"):
-    location_str = f"{st.session_state.marker_location[0]},{st.session_state.marker_location[1]}"
-    all_results = []
-    seen_place_ids = set()
-    
-    with st.spinner(f'Searching for {selected_place_type.replace("_", " ")}s... This may take a few seconds...'):
-        if grid_search_enabled:
-            grid_points = calculate_grid_points(st.session_state.marker_location, search_radius)
-            progress_text = "Making API requests..."
-            progress_bar = st.progress(0, text=progress_text)
-            
-            for idx, point in enumerate(grid_points):
-                loc_str = f"{point[0]},{point[1]}"
-                results = fetch_nearby_places(loc_str, radius=search_radius, place_type=selected_place_type)
-                
-                # Only add unique places
-                for result in results:
                     if result.get('place_id') not in seen_place_ids:
                         seen_place_ids.add(result.get('place_id'))
+                        result['category'] = place_type
                         all_results.append(result)
-                
-                # Update progress
-                progress = (idx + 1) / len(grid_points)
-                progress_bar.progress(progress, text=f"{progress_text} ({idx + 1}/9)")
-            
-            progress_bar.empty()  # Remove the progress bar when done
-        else:
-            all_results = fetch_nearby_places(location_str, radius=search_radius, place_type=selected_place_type)
 
         if all_results:
             # Sort results by review count
             sorted_results = sorted(all_results, key=lambda x: x.get('user_ratings_total', 0), reverse=True)
             
-            # Create new map with markers
-            m = create_base_map()
-            add_place_markers(sorted_results, m)
+            # Store results in session state
+            st.session_state.search_results = sorted_results
             
-            st.subheader(f"Top {selected_place_type.replace('_', ' ').title()}s Nearby:")
-            st.write(f"Found {len(all_results)} places")
-            
-            places = [
-                {
-                    'name': place.get('name'),
-                    'user_ratings_total': place.get('user_ratings_total', 0),
-                    'rating': place.get('rating', 'N/A'),
-                    'place_id': place.get('place_id')
-                }
-                for place in all_results
-            ]
-            sorted_places = sorted(places, key=lambda x: x['user_ratings_total'], reverse=True)
-            for place in sorted_places:
-                st.markdown(f"### {place['name']}")
-                st.write(f"**Rating:** {place['rating']} stars  |  **Reviews:** {place['user_ratings_total']}")
-                google_maps_link = (
-                    f"https://www.google.com/maps/search/?api=1&query={place['name'].replace(' ', '+')}"
-                    f"&query_place_id={place['place_id']}"
-                )
-                st.markdown(f"[View on Google Maps]({google_maps_link})")
-                st.write("---")
-        else:
-            st.warning(f"No {selected_place_type.replace('_', ' ')}s found nearby.")
+            # Create results map
+            results_map = create_base_map()
+            add_place_markers(sorted_results, results_map)
+            st.session_state.search_results_map = results_map
+
+# Move the single place type search here, right after typeless search
+if st.button(f"Search {selected_place_type.replace('_', ' ').title()}s"):
+    location_str = f"{st.session_state.marker_location[0]},{st.session_state.marker_location[1]}"
+    
+    with st.spinner(f'Searching for {selected_place_type}s...'):
+        results = fetch_nearby_places(location_str, radius=search_radius, place_type=selected_place_type)
+        
+        if results:
+            sorted_results = sorted(results, key=lambda x: x.get('user_ratings_total', 0), reverse=True)
+            st.session_state.search_results = sorted_results
+            results_map = create_base_map()
+            add_place_markers(sorted_results, results_map)
+            st.session_state.search_results_map = results_map
+
+# Display the results map right after the search buttons
+if st.session_state.search_results_map:
+    st.subheader("Results Map")
+    st_folium(st.session_state.search_results_map, width=700, height=500)
+
+# Display results list last
+if st.session_state.search_results:
+    st.subheader("Places Found:")
+    for place in st.session_state.search_results:
+        st.markdown(f"### {place.get('name')}")
+        st.write(f"**Rating:** {place.get('rating', 'N/A')} stars")
+        st.write(f"**Reviews:** {place.get('user_ratings_total', 0)}")
+        if 'place_id' in place:
+            google_maps_link = (
+                f"https://www.google.com/maps/search/?api=1&"
+                f"query={place['name'].replace(' ', '+')}&"
+                f"query_place_id={place['place_id']}"
+            )
+            st.markdown(f"[View on Google Maps]({google_maps_link})")
+        st.write("---")
